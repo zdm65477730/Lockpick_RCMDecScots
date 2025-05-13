@@ -14,4 +14,4 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-int save_fb_to_bmp();
+int save_fb_to_bmp(const char *bmp_path);
