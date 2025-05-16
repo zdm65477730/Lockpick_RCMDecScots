@@ -44,7 +44,7 @@ jobs:
       - name: Build
         run: |
           export DEVKITPRO=/opt/devkitpro
-          make -f atmosphere.mk dist-no-debug
+          make all
         shell: bash
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2.0.9
