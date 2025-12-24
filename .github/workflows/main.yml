@@ -30,7 +30,7 @@ jobs:
       - name: Setup ENV parameters
         run: |
           VER_FILE=Versions.inc
-          VERSION=$(awk '/^LPVERSION_MAJOR/{print $3}' $VER_FILE).$(awk '/^LPVERSION_MINOR/{print $3}' $VER_FILE).$(awk '/^LPVERSION_BUGFX/{print $3}' $VER_FILE).$(awk '/^LPVERSION_RSVD/{print $3}' $VER_FILE)
+          VERSION=$(awk '/^LPVERSION_MAJOR/{print $3}' $VER_FILE).$(awk '/^LPVERSION_MINOR/{print $3}' $VER_FILE).$(awk '/^LPVERSION_BUGFX/{print $3}' $VER_FILE)
           echo "TAG=${VERSION}" >> "${GITHUB_ENV}"
           echo "RELEASE_NAME=Lockpick_RCM ${VERSION}" >> "${GITHUB_ENV}"
         shell: bash
