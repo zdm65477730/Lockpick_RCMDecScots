@@ -44,8 +44,8 @@
 // save key family with different name than variable
 #define SAVE_KEY_FAMILY_VAR(name, varname, start) _save_key_family(#name, varname, start, ARRAY_SIZE(varname), sizeof(*(varname)), text_buffer)
 
-void dump_keys();
-int save_mariko_partial_keys(u32 start, u32 count, bool append);
-void derive_amiibo_keys();
+void dump_keys(const char *keyfile_dir);
+int save_mariko_partial_keys(const char *keyfile_path, u32 start, u32 count, bool append);
+void derive_amiibo_keys(const char *keyfile_dir);
 
 #endif
