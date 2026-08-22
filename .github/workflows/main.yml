@@ -1,245 +1,55 @@
 name: Release
+
 on:
   issue_comment:
     types: [ created ]
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
-permissions:
-  contents: read
-
 jobs:
-  validate:
-    name: Validate Release Command
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    if: >
-      contains(github.event.comment.body, '/release-action')
-      && contains(fromJSON('["OWNER", "MEMBER"]'), github.event.comment.author_association)
-    outputs:
-      release_tag: ${{ steps.extract_version.outputs.TAG }}
-      version: ${{ steps.extract_version.outputs.VERSION }}
+  build_and_release:
+    name: Build and release
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    if: contains(github.event.comment.body, '/release-action')
+
     steps:
-      - uses: actions/checkout@v5
-
-      - name: Extract & verify version from CMakeLists.txt
-        id: extract_version
+      - name: Update latest libnx
         run: |
-          VITA_VERSION=$(sed -n 's/^[[:space:]]*set(VITA_VERSION[[:space:]]*"\([^"]*\)".*/\1/p' CMakeLists.txt | head -n1 | tr -d '[:space:]')
-          DISPLAY_VERSION=$(sed -n 's/^[[:space:]]*set(PKGI_DISPLAY_VERSION[[:space:]]*"\([^"]*\)".*/\1/p' CMakeLists.txt | head -n1 | tr -d '[:space:]')
-
-          echo "DEBUG VITA_VERSION: >${VITA_VERSION}<"
-          echo "DEBUG DISPLAY_VERSION: >${DISPLAY_VERSION}<"
-
-          if [[ -z "${VITA_VERSION}" ]]; then
-            echo "::error::❌ 无法读取 VITA_VERSION，请检查 CMakeLists.txt"
-            exit 1
-          fi
-          if [[ -z "${DISPLAY_VERSION}" ]]; then
-            echo "::error::❌ 无法读取 PKGI_DISPLAY_VERSION，请检查 CMakeLists.txt"
-            exit 1
-          fi
-          if [[ "${VITA_VERSION}" != "${DISPLAY_VERSION}" ]]; then
-            echo "::error::❌ 版本不匹配：VITA_VERSION=${VITA_VERSION}, PKGI_DISPLAY_VERSION=${DISPLAY_VERSION}"
-            exit 1
-          fi
-
-          TAG="v${VITA_VERSION}"
-          echo "VERSION=${VITA_VERSION}" >> "${GITHUB_OUTPUT}"
-          echo "TAG=${TAG}" >> "${GITHUB_OUTPUT}"
-          echo "✅ Version: ${VITA_VERSION}, Tag: ${TAG}"
-
-      - name: Check git tag exists
+          git config --global --add safe.directory "*"
+          git clone --recurse-submodules https://github.com/switchbrew/libnx.git
+          cd libnx
+          make install -j$(nproc)
+        shell: bash
+      - name: Checkout latest code
+        uses: actions/checkout@v6.0.2
+        with:
+          ref: master
+          clean: true
+          fetch-depth: 0
+          fetch-tags: true
+          submodules: recursive
+      - name: Setup ENV parameters
         run: |
-          TAG=${{ steps.extract_version.outputs.TAG }}
-          if git rev-parse "tags/$TAG" >/dev/null 2>&1; then
-            echo "::error::❌ Tag $TAG 已存在，禁止重复发布"
-            exit 1
-          fi
-
-  build-vita:
-    name: Build PS Vita (UsagiPKGJ.vpk)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    needs: validate
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install build dependencies
-        run: sudo apt-get install -y ninja-build g++-12
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install Poetry
-        run: pip install 'poetry<2.0'
-
-      - name: Cache Conan packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.conan2/p
-          key: conan-vita-${{ runner.os }}-${{ hashFiles('ci/conan-vitasdk/conanfile.py', 'ci/conan-fmt/conanfile.py', 'ci/conan-libzip/conanfile.py', 'ci/conan-vitasqlite/conanfile.py', 'conanfile.py') }}
-          restore-keys: conan-vita-${{ runner.os }}-
-
-      - name: Build UsagiPKGJ.vpk
-        env:
-          CC: gcc-12
-          CXX: g++-12
+          VER_FILE=Versions.inc
+          MAJOR=$(awk '/^LPVERSION_MAJOR :=/ {gsub(/[^0-9]/,"",$3); print $3}' "$VER_FILE" | tr -d '\n\r')
+          MINOR=$(awk '/^LPVERSION_MINOR :=/ {gsub(/[^0-9]/,"",$3); print $3}' "$VER_FILE" | tr -d '\n\r')
+          BUGFX=$(awk '/^LPVERSION_BUGFX :=/ {gsub(/[^0-9]/,"",$3); print $3}' "$VER_FILE" | tr -d '\n\r')
+          VERSION="${MAJOR}.${MINOR}.${BUGFX}"
+          echo "TAG=v${VERSION}" >> "${GITHUB_ENV}"
+          echo "RELEASE_NAME=Lockpick_RCM v${VERSION}" >> "${GITHUB_ENV}"
+        shell: bash
+      - name: Build
         run: |
-          cd ci
-          ./setup_conan.sh
-          mkdir -p build && cd build
-          poetry run conan install ../.. \
-            --build missing \
-            -s build_type=RelWithDebInfo \
-            --profile:host vita \
-            --output-folder .
-          poetry run conan build ../.. \
-            -s build_type=RelWithDebInfo \
-            --profile:host vita \
-            --output-folder .
-
-      - name: Upload UsagiPKGJ.vpk
-        uses: actions/upload-artifact@v4
+          export DEVKITPRO=/opt/devkitpro
+          make all
+        shell: bash
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v3.0.1
         with:
-          name: usagi-pkgj-vita
-          path: ci/build/UsagiPKGJ.vpk
-          if-no-files-found: error
-          retention-days: 7
-
-  build-host:
-    name: Build Host (pkgj_cli + pkgj_sim)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    needs: validate
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            ninja-build g++-12 pkg-config \
-            libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev \
-            libcurl4-openssl-dev
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install Poetry
-        run: pip install 'poetry<2.0'
-
-      - name: Cache Conan packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.conan2/p
-          key: conan-host-${{ runner.os }}-${{ hashFiles('ci/conan-fmt/conanfile.py', 'ci/conan-libzip/conanfile.py', 'conanfile.py') }}
-          restore-keys: conan-host-${{ runner.os }}-
-
-      - name: Build pkgj_cli and pkgj_sim
-        env:
-          CC: gcc-12
-          CXX: g++-12
-        run: |
-          cd ci
-          ./setup_conan.sh
-          mkdir -p buildhost && cd buildhost
-          poetry run conan install ../.. \
-            --build missing \
-            -s build_type=RelWithDebInfo \
-            -s compiler=gcc \
-            -s compiler.version=12 \
-            -s compiler.libcxx=libstdc++11 \
-            --output-folder .
-          cmake ../.. \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DHOST_BUILD=ON \
-            -DBUILD_SIM=ON \
-            -DCMAKE_TOOLCHAIN_FILE=./conan_toolchain.cmake
-          ninja pkgj_cli pkgj_sim
-
-      - name: Upload pkgj_cli
-        uses: actions/upload-artifact@v4
-        with:
-          name: pkgj-cli
-          path: ci/buildhost/pkgj_cli
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload pkgj_sim
-        uses: actions/upload-artifact@v4
-        with:
-          name: pkgj-sim
-          path: ci/buildhost/pkgj_sim
-          if-no-files-found: error
-          retention-days: 7
-
-  release:
-    name: Create GitHub Release
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    needs: [validate, build-vita, build-host]
-    permissions:
-      contents: write
-      issues: write
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4.1.3
-
-      - name: Publish release
-        id: publish_release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.validate.outputs.release_tag }}
-        run: |
-          set -e
-          PRERELEASE_FLAG=""
-          if [[ "$TAG" == *"beta"* || "$TAG" == *"alpha"* || "$TAG" == *"rc"* ]]; then
-            PRERELEASE_FLAG="--prerelease"
-          fi
-
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          git tag "$TAG"
-          git push origin "$TAG"
-
-          gh release create "$TAG" \
-            --title "UsagiPKGJ $TAG" \
-            --generate-notes \
-            $PRERELEASE_FLAG \
-            "usagi-pkgj-vita/UsagiPKGJ.vpk#UsagiPKGJ-${TAG}.vpk" \
-            "pkgj-cli/pkgj_cli#pkgj_cli-${TAG}" \
-            "pkgj-sim/pkgj_sim#pkgj_sim-${TAG}"
-        continue-on-error: true
-
-      - name: Comment result to issue/pr
-        uses: actions/github-script@v7
-        continue-on-error: true
-        with:
-          script: |
-            const tag = '${{ needs.validate.outputs.release_tag }}';
-            const success = '${{ steps.publish_release.outcome }}' === 'success';
-            const repo = '${{ github.repository }}';
-            const runUrl = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}';
-            const [owner, repoName] = repo.split('/');
-
-            let body;
-            if (success) {
-              body = `✅ Release **${tag}** 创建成功！\nRelease: https://github.com/${repo}/releases/tag/${tag}`;
-            } else {
-              body = `❌ Release **${tag}** 创建失败，请查看流水线日志：${runUrl}`;
-            }
-
-            await github.rest.issues.createComment({
-              owner: owner,
-              repo: repoName,
-              issue_number: context.issue.number,
-              body: body
-            });
+          name: ${{ env.RELEASE_NAME }}
+          tag_name: ${{ env.TAG }}
+          draft: false
+          prerelease: false
+          generate_release_notes: yes
+          make_latest: true
+          files: |
+            output/Lockpick_RCM.bin
