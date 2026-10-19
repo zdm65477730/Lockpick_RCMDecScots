@@ -44,6 +44,8 @@
 
 #include "keys/keys.h"
 
+#define SD_STORE_PATH "sd:/atmosphere/automatic_backups/dumps"
+
 hekate_config h_cfg;
 boot_cfg_t __attribute__((section ("._boot_cfg"))) b_cfg;
 const volatile ipl_ver_meta_t __attribute__((section ("._ipl_version"))) ipl_ver = {
@@ -293,7 +295,7 @@ void dump_sysnand()
 {
 	h_cfg.emummc_force_disable = true;
 	emu_cfg.enabled = false;
-	dump_keys();
+	dump_keys(SD_STORE_PATH);
 }
 
 void dump_emunand()
@@ -301,12 +303,12 @@ void dump_emunand()
 	if (h_cfg.emummc_force_disable)
 		return;
 	emu_cfg.enabled = true;
-	dump_keys();
+	dump_keys(SD_STORE_PATH);
 }
 
 void dump_amiibo_keys()
 {
-	derive_amiibo_keys();
+	derive_amiibo_keys(SD_STORE_PATH);
 }
 
 void dump_mariko_partial_keys();
@@ -369,7 +371,7 @@ void grey_out_menu_item(ment_t *menu)
 void dump_mariko_partial_keys()
 {
 	if (h_cfg.t210b01) {
-		int res = save_mariko_partial_keys(0, 16, false);
+		int res = save_mariko_partial_keys(SD_STORE_PATH "/partialaes.keys", 0, 16, false);
 		if (res == 0 || res == 3)
 		{
 			// Grey out dumping menu items as the keyslots have been invalidated.
